@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/amenocal/gh-gl-create-refs/pkg/csv"
 	"github.com/amenocal/gh-gl-create-refs/pkg/gitlab"
@@ -79,7 +80,15 @@ func runFetchRef(cmd *cobra.Command, args []string) error {
 	// Fetch merge request references
 	refs, err := client.FetchMergeRequestRefs(projectPath)
 	if err != nil {
-		return fmt.Errorf("failed to fetch merge request references: %w", err)
+		// Provide more helpful error messages for common issues
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "404") {
+			return fmt.Errorf("repository not found: %s. Please check the repository path and your access permissions", projectPath)
+		}
+		if strings.Contains(errMsg, "401") || strings.Contains(errMsg, "403") {
+			return fmt.Errorf("authentication failed: please check your GitLab token has access to repository %s", projectPath)
+		}
+		return fmt.Errorf("failed to fetch merge request references from %s: %w", projectPath, err)
 	}
 
 	if len(refs) == 0 {

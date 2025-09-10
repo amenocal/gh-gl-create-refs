@@ -8,6 +8,9 @@
 *.so
 *.dylib
 
+# Main binary
+gh-gl-create-refs
+
 # Test binary, built with `go test -c`
 *.test
 
