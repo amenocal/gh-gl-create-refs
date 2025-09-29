@@ -227,6 +227,36 @@ func (c *Client) FetchMergeRequestRefsFromRepo(repoPath string, baseURLOverride 
 	return projectPath, nil
 }
 
+// GenerateBranchName creates a branch name following the migration pattern
+func GenerateBranchName(prNumber int) string {
+	return fmt.Sprintf("migration-pr-%d", prNumber)
+}
+
+// CreateBranch creates a new branch in the GitLab repository
+func (c *Client) CreateBranch(projectPath, branchName, ref string) error {
+	// Apply rate limiting before making the create branch request
+	c.rateLimitWait()
+
+	createOpts := &gitlab.CreateBranchOptions{
+		Branch: gitlab.Ptr(branchName),
+		Ref:    gitlab.Ptr(ref),
+	}
+
+	_, resp, err := c.client.Branches.CreateBranch(projectPath, createOpts)
+	if err != nil {
+		// Check if it's a specific error we can handle
+		if resp != nil && resp.StatusCode == 409 {
+			return fmt.Errorf("branch '%s' already exists", branchName)
+		}
+		return fmt.Errorf("failed to create branch '%s': %w", branchName, err)
+	}
+
+	// Check rate limit headers from the response
+	c.checkRateLimitHeaders(resp.Response)
+
+	return nil
+}
+
 // wrapFetchError provides more helpful error messages for common GitLab API issues
 func (c *Client) wrapFetchError(err error, projectPath string) error {
 	errMsg := err.Error()
