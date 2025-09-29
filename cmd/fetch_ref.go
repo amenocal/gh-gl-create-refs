@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/amenocal/gh-gl-create-refs/pkg/csv"
 	"github.com/amenocal/gh-gl-create-refs/pkg/gitlab"
@@ -60,40 +61,53 @@ func runFetchRef(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Fetching merge requests from repository...\n")
 
-	// Fetch merge request references using the client
-	refs, projectPath, err := client.FetchMergeRequestRefsFromRepo(repoPath, gitlabBaseURL)
-	if err != nil {
-		return err
-	}
-
-	if len(refs) == 0 {
-		fmt.Printf("No merge requests found in %s\n", projectPath)
-		return nil
-	}
-
-	fmt.Printf("Found %d merge requests from %s\n", len(refs), projectPath)
-
-	// Generate output file path
+	// Determine output file path
 	var outputPath string
 	if outputFile != "" {
 		outputPath = outputFile
 	} else {
-		outputPath, err = csv.WriteRefsToCSV(refs, repoPath)
-		if err != nil {
-			return fmt.Errorf("failed to write CSV file: %w", err)
-		}
+		outputPath = csv.GenerateFilename(repoPath)
 	}
 
-	// If custom output file is specified, write to it
-	if outputFile != "" {
-		err = csv.WriteRefsToFile(refs, outputFile)
-		if err != nil {
-			return fmt.Errorf("failed to write CSV file: %w", err)
+	// Create CSV stream writer for incremental writing
+	csvWriter, err := csv.NewStreamWriter(outputPath)
+	if err != nil {
+		return fmt.Errorf("failed to create CSV writer: %w", err)
+	}
+	defer csvWriter.Close()
+
+	// Track progress
+	refCount := 0
+
+	// Create processor callback that writes each MR to CSV immediately
+	processor := func(ref gitlab.MergeRequestRef) error {
+		if err := csvWriter.WriteRef(ref); err != nil {
+			return fmt.Errorf("failed to write merge request %d to CSV: %w", ref.IID, err)
 		}
-		outputPath = outputFile
+		refCount++
+		return nil
 	}
 
-	fmt.Printf("Successfully exported merge request references to: %s\n", outputPath)
+	// Fetch merge request references using the callback-based API
+	projectPath, err := client.FetchMergeRequestRefsFromRepo(repoPath, gitlabBaseURL, processor)
+	if err != nil {
+		return err
+	}
+
+	if refCount == 0 {
+		fmt.Printf("No merge requests found in %s\n", projectPath)
+		return nil
+	}
+
+	fmt.Printf("Found %d merge requests from %s\n", refCount, projectPath)
+
+	// Get absolute path for the output
+	absPath, err := filepath.Abs(outputPath)
+	if err != nil {
+		absPath = outputPath // Fallback to relative path
+	}
+
+	fmt.Printf("Successfully exported merge request references to: %s\n", absPath)
 
 	return nil
 }

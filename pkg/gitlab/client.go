@@ -27,6 +27,9 @@ type MergeRequestRef struct {
 	HeadSHA string
 }
 
+// MergeRequestProcessor is a callback function that processes each merge request as it's fetched
+type MergeRequestProcessor func(MergeRequestRef) error
+
 // NewClient creates a new GitLab client
 func NewClient(token, baseURL string) (*Client, error) {
 	var client *gitlab.Client
@@ -139,8 +142,8 @@ func ParseRepoPath(repoPath string) (string, string, error) {
 	return "", repoPath, nil
 }
 
-// FetchMergeRequestRefs fetches all merge request references for a given repository
-func (c *Client) FetchMergeRequestRefs(projectPath string) ([]MergeRequestRef, error) {
+// FetchMergeRequestRefs fetches all merge request references for a given repository and processes them via callback
+func (c *Client) FetchMergeRequestRefs(projectPath string, processor MergeRequestProcessor) error {
 	// List all merge requests for the project
 	opts := &gitlab.ListProjectMergeRequestsOptions{
 		ListOptions: gitlab.ListOptions{
@@ -149,7 +152,6 @@ func (c *Client) FetchMergeRequestRefs(projectPath string) ([]MergeRequestRef, e
 		State: gitlab.Ptr("all"), // Get both open and closed MRs
 	}
 
-	var allMRs []MergeRequestRef
 	pageCount := 0
 
 	for {
@@ -159,7 +161,7 @@ func (c *Client) FetchMergeRequestRefs(projectPath string) ([]MergeRequestRef, e
 
 		mrs, resp, err := c.client.MergeRequests.ListProjectMergeRequests(projectPath, opts)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch merge requests: %w", err)
+			return fmt.Errorf("failed to fetch merge requests: %w", err)
 		}
 
 		fmt.Printf("📋 Processing page %d: found %d merge requests...\n", pageCount, len(mrs))
@@ -174,18 +176,23 @@ func (c *Client) FetchMergeRequestRefs(projectPath string) ([]MergeRequestRef, e
 			// Fetch detailed merge request to get diff_refs
 			detailedMR, detailResp, err := c.client.MergeRequests.GetMergeRequest(projectPath, mr.IID, nil)
 			if err != nil {
-				return nil, fmt.Errorf("failed to fetch merge request %d: %w", mr.IID, err)
+				return fmt.Errorf("failed to fetch merge request %d: %w", mr.IID, err)
 			}
 
 			// Check rate limit headers from the detailed request response
 			c.checkRateLimitHeaders(detailResp.Response)
 
 			if detailedMR.DiffRefs.HeadSha != "" {
-				allMRs = append(allMRs, MergeRequestRef{
+				ref := MergeRequestRef{
 					ID:      mr.ID,
 					IID:     mr.IID,
 					HeadSHA: detailedMR.DiffRefs.HeadSha,
-				})
+				}
+
+				// Process the merge request via callback
+				if err := processor(ref); err != nil {
+					return fmt.Errorf("failed to process merge request %d: %w", mr.IID, err)
+				}
 			}
 		}
 
@@ -196,29 +203,28 @@ func (c *Client) FetchMergeRequestRefs(projectPath string) ([]MergeRequestRef, e
 		opts.Page = resp.NextPage
 	}
 
-	return allMRs, nil
+	return nil
 }
 
-// FetchMergeRequestRefsFromRepo is a convenience method that handles parsing the repo path
-// and fetching merge request references with better error messages
-func (c *Client) FetchMergeRequestRefsFromRepo(repoPath string, baseURLOverride string) ([]MergeRequestRef, string, error) {
+// FetchMergeRequestRefsFromRepo processes merge request references using a callback
+func (c *Client) FetchMergeRequestRefsFromRepo(repoPath string, baseURLOverride string, processor MergeRequestProcessor) (string, error) {
 	// Parse repository path and determine base URL
 	baseURL, projectPath, err := ParseRepoPath(repoPath)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to parse repository path: %w", err)
+		return "", fmt.Errorf("failed to parse repository path: %w", err)
 	}
 
 	// Note: We don't use baseURL from parsing if baseURLOverride is provided
 	// This is handled during client creation in NewClientFromFlags
 	_ = baseURL
 
-	// Fetch merge request references
-	refs, err := c.FetchMergeRequestRefs(projectPath)
+	// Fetch merge request references using callback
+	err = c.FetchMergeRequestRefs(projectPath, processor)
 	if err != nil {
-		return nil, "", c.wrapFetchError(err, projectPath)
+		return "", c.wrapFetchError(err, projectPath)
 	}
 
-	return refs, projectPath, nil
+	return projectPath, nil
 }
 
 // wrapFetchError provides more helpful error messages for common GitLab API issues
