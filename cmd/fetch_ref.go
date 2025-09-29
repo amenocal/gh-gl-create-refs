@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"strings"
 
 	"github.com/amenocal/gh-gl-create-refs/pkg/csv"
 	"github.com/amenocal/gh-gl-create-refs/pkg/gitlab"
@@ -11,11 +9,11 @@ import (
 )
 
 var fetchRefCmd = &cobra.Command{
-	Use:   "fetch-ref [repository]",
+	Use:   "fetch-refs",
 	Short: "Fetch merge request references from a GitLab repository",
 	Long: `Fetch all merge request references from a GitLab repository and output them to a CSV file.
 
-The repository can be specified in various formats:
+The repository can be specified using the --repository flag in various formats:
 - Full URL: https://gitlab.com/group/project
 - Group/project: group/project
 - Nested groups: group/subgroup/project or group/subgroup/subgroup/project
@@ -25,10 +23,10 @@ The output CSV file will contain two columns:
 2. Head SHA from diff_refs
 
 Examples:
-  gh gl-create-refs fetch-ref group/project
-  gh gl-create-refs fetch-ref https://gitlab.example.com/group/subgroup/project
-  gh gl-create-refs fetch-ref group/subgroup/subgroup/project`,
-	Args: cobra.ExactArgs(1),
+  gh gl-create-refs fetch-refs --repository group/project
+  gh gl-create-refs fetch-refs --repository https://gitlab.example.com/group/subgroup/project
+  gh gl-create-refs fetch-refs -r group/subgroup/subgroup/project`,
+	Args: cobra.NoArgs,
 	RunE: runFetchRef,
 }
 
@@ -36,6 +34,7 @@ var (
 	gitlabToken   string
 	gitlabBaseURL string
 	outputFile    string
+	repository    string
 )
 
 func init() {
@@ -44,59 +43,35 @@ func init() {
 	fetchRefCmd.Flags().StringVarP(&gitlabToken, "token", "t", "", "GitLab access token (can also use GITLAB_TOKEN environment variable)")
 	fetchRefCmd.Flags().StringVarP(&gitlabBaseURL, "base-url", "b", "", "GitLab base URL (default: https://gitlab.com)")
 	fetchRefCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output CSV file path (default: auto-generated from repository name)")
+	fetchRefCmd.Flags().StringVarP(&repository, "repository", "r", "", "GitLab repository path (required)")
+
+	// Mark the repository flag as required
+	fetchRefCmd.MarkFlagRequired("repository")
 }
 
 func runFetchRef(cmd *cobra.Command, args []string) error {
-	repoPath := args[0]
+	repoPath := repository
 
-	// Get token from flag or environment variable
-	token := gitlabToken
-	if token == "" {
-		token = os.Getenv("GITLAB_TOKEN")
-	}
-	if token == "" {
-		return fmt.Errorf("GitLab token is required. Use --token flag or set GITLAB_TOKEN environment variable")
-	}
-
-	// Parse repository path and determine base URL
-	baseURL, projectPath, err := gitlab.ParseRepoPath(repoPath)
+	// Create GitLab client from flags and environment
+	client, err := gitlab.NewClient(gitlabToken, gitlabBaseURL)
 	if err != nil {
-		return fmt.Errorf("failed to parse repository path: %w", err)
+		return err
 	}
 
-	// Use provided base URL or the one parsed from the repo path
-	if gitlabBaseURL != "" {
-		baseURL = gitlabBaseURL
-	}
+	fmt.Printf("Fetching merge requests from repository...\n")
 
-	// Create GitLab client
-	client, err := gitlab.NewClient(token, baseURL)
+	// Fetch merge request references using the client
+	refs, projectPath, err := client.FetchMergeRequestRefsFromRepo(repoPath, gitlabBaseURL)
 	if err != nil {
-		return fmt.Errorf("failed to create GitLab client: %w", err)
-	}
-
-	fmt.Printf("Fetching merge requests from %s...\n", projectPath)
-
-	// Fetch merge request references
-	refs, err := client.FetchMergeRequestRefs(projectPath)
-	if err != nil {
-		// Provide more helpful error messages for common issues
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "404") {
-			return fmt.Errorf("repository not found: %s. Please check the repository path and your access permissions", projectPath)
-		}
-		if strings.Contains(errMsg, "401") || strings.Contains(errMsg, "403") {
-			return fmt.Errorf("authentication failed: please check your GitLab token has access to repository %s", projectPath)
-		}
-		return fmt.Errorf("failed to fetch merge request references from %s: %w", projectPath, err)
+		return err
 	}
 
 	if len(refs) == 0 {
-		fmt.Println("No merge requests found in the repository")
+		fmt.Printf("No merge requests found in %s\n", projectPath)
 		return nil
 	}
 
-	fmt.Printf("Found %d merge requests\n", len(refs))
+	fmt.Printf("Found %d merge requests from %s\n", len(refs), projectPath)
 
 	// Generate output file path
 	var outputPath string
