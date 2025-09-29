@@ -227,10 +227,7 @@ func (c *Client) FetchMergeRequestRefsFromRepo(repoPath string, baseURLOverride 
 	return projectPath, nil
 }
 
-// GenerateBranchName creates a branch name following the migration pattern
-func GenerateBranchName(prNumber int) string {
-	return fmt.Sprintf("migration-pr-%d", prNumber)
-}
+
 
 // CreateBranch creates a new branch in the GitLab repository
 func (c *Client) CreateBranch(projectPath, branchName, ref string) error {
