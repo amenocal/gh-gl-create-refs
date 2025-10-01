@@ -227,8 +227,6 @@ func (c *Client) FetchMergeRequestRefsFromRepo(repoPath string, baseURLOverride 
 	return projectPath, nil
 }
 
-
-
 // CreateBranch creates a new branch in the GitLab repository
 func (c *Client) CreateBranch(projectPath, branchName, ref string) error {
 	// Apply rate limiting before making the create branch request
