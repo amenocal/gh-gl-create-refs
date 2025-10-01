@@ -80,3 +80,74 @@ func TestWriteRefsToFile(t *testing.T) {
 		t.Errorf("File content = %q, want %q", string(content), expected)
 	}
 }
+
+func TestReadRefsFromFile(t *testing.T) {
+	// Create a temporary directory for test files
+	tempDir := t.TempDir()
+	testFile := filepath.Join(tempDir, "test.csv")
+
+	// Create test CSV content
+	content := "1,abc123\n16,def456\n17,ghi789\n"
+	err := os.WriteFile(testFile, []byte(content), 0644)
+	if err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	// Read refs from file
+	refs, err := ReadRefsFromFile(testFile)
+	if err != nil {
+		t.Fatalf("ReadRefsFromFile failed: %v", err)
+	}
+
+	// Verify the content
+	expected := []gitlab.MergeRequestRef{
+		{IID: 1, HeadSHA: "abc123"},
+		{IID: 16, HeadSHA: "def456"},
+		{IID: 17, HeadSHA: "ghi789"},
+	}
+
+	if len(refs) != len(expected) {
+		t.Fatalf("Expected %d refs, got %d", len(expected), len(refs))
+	}
+
+	for i, ref := range refs {
+		if ref.IID != expected[i].IID || ref.HeadSHA != expected[i].HeadSHA {
+			t.Errorf("Ref %d: expected IID=%d SHA=%s, got IID=%d SHA=%s", 
+				i, expected[i].IID, expected[i].HeadSHA, ref.IID, ref.HeadSHA)
+		}
+	}
+}
+
+func TestReadRefsFromFile_InvalidFormat(t *testing.T) {
+	tempDir := t.TempDir()
+	testFile := filepath.Join(tempDir, "invalid.csv")
+
+	// Test with invalid number of columns
+	content := "1,abc123,extra\n"
+	err := os.WriteFile(testFile, []byte(content), 0644)
+	if err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	_, err = ReadRefsFromFile(testFile)
+	if err == nil {
+		t.Fatal("Expected error for invalid CSV format, got nil")
+	}
+}
+
+func TestReadRefsFromFile_InvalidIID(t *testing.T) {
+	tempDir := t.TempDir()
+	testFile := filepath.Join(tempDir, "invalid_iid.csv")
+
+	// Test with invalid IID
+	content := "not_a_number,abc123\n"
+	err := os.WriteFile(testFile, []byte(content), 0644)
+	if err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	_, err = ReadRefsFromFile(testFile)
+	if err == nil {
+		t.Fatal("Expected error for invalid IID, got nil")
+	}
+}

@@ -129,3 +129,37 @@ func (sw *StreamWriter) Close() error {
 
 	return nil
 }
+
+// ReadRefsFromFile reads merge request references from a CSV file
+func ReadRefsFromFile(filename string) ([]gitlab.MergeRequestRef, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file %s: %w", filename, err)
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read CSV file: %w", err)
+	}
+
+	var refs []gitlab.MergeRequestRef
+	for i, record := range records {
+		if len(record) != 2 {
+			return nil, fmt.Errorf("invalid CSV format at line %d: expected 2 columns, got %d", i+1, len(record))
+		}
+
+		iid, err := strconv.Atoi(record[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid merge request IID at line %d: %w", i+1, err)
+		}
+
+		refs = append(refs, gitlab.MergeRequestRef{
+			IID:     iid,
+			HeadSHA: record[1],
+		})
+	}
+
+	return refs, nil
+}

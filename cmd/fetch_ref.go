@@ -31,27 +31,26 @@ Examples:
 	RunE: runFetchRef,
 }
 
-var (
-	gitlabToken   string
-	gitlabBaseURL string
-	outputFile    string
-	repository    string
-)
+// No global variables needed - using local variables with flag access
 
 func init() {
 	rootCmd.AddCommand(fetchRefCmd)
 
-	fetchRefCmd.Flags().StringVarP(&gitlabToken, "token", "t", "", "GitLab access token (can also use GITLAB_TOKEN environment variable)")
-	fetchRefCmd.Flags().StringVarP(&gitlabBaseURL, "base-url", "b", "", "GitLab base URL (default: https://gitlab.com)")
-	fetchRefCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output CSV file path (default: auto-generated from repository name)")
-	fetchRefCmd.Flags().StringVarP(&repository, "repository", "r", "", "GitLab repository path (required)")
+	fetchRefCmd.Flags().StringP("token", "t", "", "GitLab access token (can also use GITLAB_TOKEN environment variable)")
+	fetchRefCmd.Flags().StringP("base-url", "b", "", "GitLab base URL (default: https://gitlab.com)")
+	fetchRefCmd.Flags().StringP("output", "o", "", "Output CSV file path (default: auto-generated from repository name)")
+	fetchRefCmd.Flags().StringP("repository", "r", "", "GitLab repository path (required)")
 
 	// Mark the repository flag as required
 	fetchRefCmd.MarkFlagRequired("repository")
 }
 
 func runFetchRef(cmd *cobra.Command, args []string) error {
-	repoPath := repository
+	// Get parameters from flags
+	repository := cmd.Flag("repository").Value.String()
+	gitlabToken := cmd.Flag("token").Value.String()
+	gitlabBaseURL := cmd.Flag("base-url").Value.String()
+	outputFile := cmd.Flag("output").Value.String()
 
 	// Create GitLab client from flags and environment
 	client, err := gitlab.NewClient(gitlabToken, gitlabBaseURL)
@@ -66,7 +65,7 @@ func runFetchRef(cmd *cobra.Command, args []string) error {
 	if outputFile != "" {
 		outputPath = outputFile
 	} else {
-		outputPath = csv.GenerateFilename(repoPath)
+		outputPath = csv.GenerateFilename(repository)
 	}
 
 	// Create CSV stream writer for incremental writing
@@ -89,7 +88,7 @@ func runFetchRef(cmd *cobra.Command, args []string) error {
 	}
 
 	// Fetch merge request references using the callback-based API
-	projectPath, err := client.FetchMergeRequestRefsFromRepo(repoPath, gitlabBaseURL, processor)
+	projectPath, err := client.FetchMergeRequestRefsFromRepo(repository, gitlabBaseURL, processor)
 	if err != nil {
 		return err
 	}
