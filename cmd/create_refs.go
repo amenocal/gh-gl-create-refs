@@ -26,19 +26,13 @@ Examples:
   gh gl-create-refs create-refs --input group-project.csv --repository group/project
   gh gl-create-refs create-refs -i refs.csv -r group/project --target target-group/target-project --token your_token
   gh gl-create-refs create-refs --repository source-group/source-project --fetch
-  gh gl-create-refs create-refs -r source/repo --target target/repo --fetch --base-url https://gitlab.example.com`,
+  gh gl-create-refs create-refs -r source/repo --target target/repo --fetch --base-url https://gitlab.example.com
+  gh gl-create-refs create-refs --repository source/repo --fetch --mock`,
 	Args: cobra.NoArgs,
 	RunE: runCreateRefs,
 }
 
-var (
-	createInputFile  string
-	createRepository string
-	createTargetRepo string
-	token            string
-	baseURL          string
-	createFetch      bool
-)
+// No global variables needed - using local variables with flag access
 
 // generateBranchName creates a branch name following the migration pattern
 func generateBranchName(prNumber int) string {
@@ -48,20 +42,30 @@ func generateBranchName(prNumber int) string {
 func init() {
 	rootCmd.AddCommand(createRefsCmd)
 
-	createRefsCmd.Flags().StringVarP(&createInputFile, "input", "i", "", "Input CSV file path (required unless --fetch is used)")
-	createRefsCmd.Flags().StringVarP(&createRepository, "repository", "r", "", "Source GitLab repository path (required)")
-	createRefsCmd.Flags().StringVarP(&createTargetRepo, "target", "", "", "Target GitLab repository path where branches will be created (optional, defaults to repository)")
-	createRefsCmd.Flags().StringVarP(&token, "token", "t", "", "GitLab access token (can also use GITLAB_TOKEN environment variable)")
-	createRefsCmd.Flags().StringVarP(&baseURL, "base-url", "b", "", "GitLab base URL (default: https://gitlab.com)")
-	createRefsCmd.Flags().BoolVar(&createFetch, "fetch", false, "Fetch merge requests in real-time instead of using CSV file")
+	createRefsCmd.Flags().StringP("input", "i", "", "Input CSV file path (required unless --fetch is used)")
+	createRefsCmd.Flags().StringP("repository", "r", "", "Source GitLab repository path (required)")
+	createRefsCmd.Flags().String("target", "", "Target GitLab repository path where branches will be created (optional, defaults to repository)")
+	createRefsCmd.Flags().StringP("token", "t", "", "GitLab access token (can also use GITLAB_TOKEN environment variable)")
+	createRefsCmd.Flags().StringP("base-url", "b", "", "GitLab base URL (default: https://gitlab.com)")
+	createRefsCmd.Flags().Bool("fetch", false, "Fetch merge requests in real-time instead of using CSV file")
+	createRefsCmd.Flags().Bool("mock", false, "Mock mode: simulate branch creation without actually creating branches")
 
 	// Mark the repository flag as required
 	createRefsCmd.MarkFlagRequired("repository")
 }
 
 func runCreateRefs(cmd *cobra.Command, args []string) error {
+	// Get parameters from flags
+	inputFile := cmd.Flag("input").Value.String()
+	repository := cmd.Flag("repository").Value.String()
+	targetRepository := cmd.Flag("target").Value.String()
+	token := cmd.Flag("token").Value.String()
+	baseURL := cmd.Flag("base-url").Value.String()
+	fetch, _ := cmd.Flags().GetBool("fetch")
+	mock, _ := cmd.Flags().GetBool("mock")
+
 	// Validate input parameters
-	if err := validateCreateRefsFlags(); err != nil {
+	if err := validateCreateRefsFlags(repository, fetch, inputFile); err != nil {
 		return err
 	}
 
@@ -72,7 +76,7 @@ func runCreateRefs(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get merge request references
-	refs, err := getMergeRequestRefs(client)
+	refs, err := getMergeRequestRefs(client, fetch, inputFile, repository, baseURL)
 	if err != nil {
 		return err
 	}
@@ -83,72 +87,76 @@ func runCreateRefs(cmd *cobra.Command, args []string) error {
 	}
 
 	// Determine target repository
-	targetRepo := createTargetRepo
+	targetRepo := targetRepository
 	if targetRepo == "" {
-		targetRepo = createRepository
+		targetRepo = repository
 	}
 
 	// Create branches in target repository
-	return createBranchesInRepo(client, refs, targetRepo)
+	return createBranchesInRepo(client, refs, targetRepo, fetch, inputFile, mock)
 }
 
-func validateCreateRefsFlags() error {
-	if createRepository == "" {
+func validateCreateRefsFlags(repository string, fetch bool, inputFile string) error {
+	if repository == "" {
 		return fmt.Errorf("--repository is required")
 	}
 
-	if !createFetch && createInputFile == "" {
+	if !fetch && inputFile == "" {
 		return fmt.Errorf("--input is required unless --fetch is used")
 	}
 
 	return nil
 }
 
-func getMergeRequestRefs(client *gitlab.Client) ([]gitlab.MergeRequestRef, error) {
-	if createFetch {
-		return fetchMergeRequestRefsRealTime(client)
+func getMergeRequestRefs(client *gitlab.Client, fetch bool, inputFile, repository, baseURL string) ([]gitlab.MergeRequestRef, error) {
+	if fetch {
+		return fetchMergeRequestRefsRealTime(client, repository, baseURL)
 	}
-	return readMergeRequestRefsFromCSV()
+	return readMergeRequestRefsFromCSV(inputFile)
 }
 
-func fetchMergeRequestRefsRealTime(client *gitlab.Client) ([]gitlab.MergeRequestRef, error) {
-	fmt.Printf("Fetching merge requests from %s...\n", createRepository)
-	
+func fetchMergeRequestRefsRealTime(client *gitlab.Client, repository, baseURL string) ([]gitlab.MergeRequestRef, error) {
+	fmt.Printf("Fetching merge requests from %s...\n", repository)
+
 	var fetchedRefs []gitlab.MergeRequestRef
 	processor := func(ref gitlab.MergeRequestRef) error {
 		fetchedRefs = append(fetchedRefs, ref)
 		return nil
 	}
 
-	_, err := client.FetchMergeRequestRefsFromRepo(createRepository, baseURL, processor)
+	_, err := client.FetchMergeRequestRefsFromRepo(repository, baseURL, processor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch merge requests: %w", err)
 	}
-	
+
 	fmt.Printf("Found %d merge requests\n", len(fetchedRefs))
 	return fetchedRefs, nil
 }
 
-func readMergeRequestRefsFromCSV() ([]gitlab.MergeRequestRef, error) {
-	fmt.Printf("Reading merge request references from %s...\n", createInputFile)
-	
-	refs, err := csv.ReadRefsFromFile(createInputFile)
+func readMergeRequestRefsFromCSV(inputFile string) ([]gitlab.MergeRequestRef, error) {
+	fmt.Printf("Reading merge request references from %s...\n", inputFile)
+
+	refs, err := csv.ReadRefsFromFile(inputFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read CSV file: %w", err)
 	}
-	
+
 	fmt.Printf("Found %d merge request references in CSV file\n", len(refs))
 	return refs, nil
 }
 
-func createBranchesInRepo(client *gitlab.Client, refs []gitlab.MergeRequestRef, targetRepo string) error {
+func createBranchesInRepo(client *gitlab.Client, refs []gitlab.MergeRequestRef, targetRepo string, fetch bool, inputFile string, mock bool) error {
 	// Parse target repository path
 	_, targetProjectPath, err := gitlab.ParseRepoPath(targetRepo)
 	if err != nil {
 		return fmt.Errorf("failed to parse target repository path: %w", err)
 	}
 
-	fmt.Printf("Creating branches in %s...\n", targetProjectPath)
+	if mock {
+		fmt.Printf("🧪 Mock mode: Simulating branch creation in %s...\n", targetProjectPath)
+	} else {
+		fmt.Printf("Creating branches in %s...\n", targetProjectPath)
+	}
 
 	// Create branches
 	successCount := 0
@@ -156,24 +164,31 @@ func createBranchesInRepo(client *gitlab.Client, refs []gitlab.MergeRequestRef, 
 
 	for _, ref := range refs {
 		branchName := generateBranchName(ref.IID)
-		
-		fmt.Printf("Creating branch '%s' from SHA %s...", branchName, ref.HeadSHA)
-		
-		err = client.CreateBranch(targetProjectPath, branchName, ref.HeadSHA)
-		if err != nil {
-			fmt.Printf(" ❌ Failed: %v\n", err)
-			errorCount++
-		} else {
-			fmt.Printf(" ✅ Created successfully\n")
+
+		if mock {
+			// Mock mode: just print what would be created
+			fmt.Printf("Created branch %s with sha: %s\n", branchName, ref.HeadSHA)
 			successCount++
+		} else {
+			// Real mode: actually create the branch
+			fmt.Printf("Creating branch '%s' from SHA %s...", branchName, ref.HeadSHA)
+
+			err = client.CreateBranch(targetProjectPath, branchName, ref.HeadSHA)
+			if err != nil {
+				fmt.Printf(" ❌ Failed: %v\n", err)
+				errorCount++
+			} else {
+				fmt.Printf(" ✅ Created successfully\n")
+				successCount++
+			}
 		}
 	}
 
-	printSummary(successCount, errorCount, len(refs))
+	printSummary(successCount, errorCount, len(refs), fetch, inputFile)
 	return nil
 }
 
-func printSummary(successCount, errorCount, totalCount int) {
+func printSummary(successCount, errorCount, totalCount int, fetch bool, inputFile string) {
 	fmt.Printf("\nSummary:\n")
 	fmt.Printf("✅ Successfully created: %d branches\n", successCount)
 	if errorCount > 0 {
@@ -182,10 +197,10 @@ func printSummary(successCount, errorCount, totalCount int) {
 	fmt.Printf("📋 Total processed: %d merge requests\n", totalCount)
 
 	// Get absolute path for the input file if used
-	if !createFetch && createInputFile != "" {
-		absPath, err := filepath.Abs(createInputFile)
+	if !fetch && inputFile != "" {
+		absPath, err := filepath.Abs(inputFile)
 		if err != nil {
-			absPath = createInputFile // Fallback to relative path
+			absPath = inputFile // Fallback to relative path
 		}
 		fmt.Printf("📄 Input file: %s\n", absPath)
 	}
