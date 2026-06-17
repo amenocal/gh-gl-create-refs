@@ -2,6 +2,22 @@
 
 A GitHub CLI extension to fetch GitLab merge request references and export them as CSV files.
 
+## Why this exists
+
+While performing GitLab -> GitHub migrations, merge requests can fail to migrate because GitLab prunes or garbage-collects git data from squashed or force-pushed branches. When the head ref SHA of a closed/merged MR is no longer in git history, valid commit data can't be exported — so those MRs get exported as plain issues instead of pull requests, and GitHub can't render their changed files.
+
+This tool fixes that by creating a branch for every merge request using its head ref SHA, which puts the missing commits back into the repository's git history.
+
+## When to use it
+
+Reach for this tool during a GitLab → GitHub migration when you see symptoms like:
+
+- Merge requests being exported as issues instead of pull requests.
+- Migrated PRs showing no changed files
+- "Infinity" or missing commit issues on closed/merged PRs
+
+These all point to the same root cause: missing head ref SHAs in the git history. Once you recognize the symptoms, run this tool to recreate the refs, then re-export and re-migrate the repository.
+
 ## Installation
 
 This is a GitHub CLI extension. To install it:
